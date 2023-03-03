@@ -8,7 +8,7 @@ import time
 import requests
 import tarfile
 import subprocess
-from typing import List, Dict
+from typing import List, Dict, Union, Any
 import logging
 
 logger = logging.getLogger(__name__)
@@ -36,20 +36,22 @@ class ElasticSearchBM25(object):
 
     def __init__(
         self,
-        corpus: Dict[str, str],
+        corpus: Union[List[Dict[str, Any]], None] = None,
         index_name: str = "one_trial",
         reindexing: bool = True,
         port_http: str = "9200",
         port_tcp: str = "9300",
         host: str = None,
         service_type: str = "docker",
-        es_version: str = "7.9.1",
+        es_version: str = "7.16.1",
         timeout: int = 100,
         max_waiting: int = 100,
         cache_dir: str = "/tmp",
+        chunk_size = 1000
     ):
         self.container_name = None
         self.pid = None
+        self.chunk_size = chunk_size
         if host is not None:
             self._wait_and_check(host, port_http, max_waiting)
             logger.info(f"Successfully reached out to ES service at {host}:{port_http}")
@@ -89,8 +91,10 @@ class ElasticSearchBM25(object):
                 )
                 es.indices.delete(index=index_name)
         else:
-            logger.info(f"No index found and now do indexing")
-            self._index_corpus(corpus, index_name)
+            logger.info(f"No index found, create new index")
+            self._create_index(index_name=index_name)
+            if corpus is not None:
+                self._add_corpus(corpus, index_name)
         self.index_name = index_name
         logger.info("All set up.")
 
@@ -200,36 +204,83 @@ class ElasticSearchBM25(object):
         logger.info(f"Successfully started a ES service from executable")
         return es_pid
 
-    def _index_corpus(self, corpus, index_name):
+    def _create_index(self, index_name):
+        
+        #es_index = {
+        #    "mappings": {
+        #        "properties": {
+        #            "document": {"type": "text"},
+        #        }
+        #    }
+        #}
+        settings = {
+            'settings': {
+                'index': {
+                    'number_of_shards': 1,
+                    'number_of_replicas': 1,
+
+                    # configure our default similarity algorithm explicitly to use bm25,
+                    # this allows it to use it for all the fields
+                    'similarity': {
+                        'default': {
+                            'type': 'BM25'
+                        }
+                    }
+                }
+            },
+            # we will be indexing our documents in the title field using the English analyzer,
+            # which removes stop words for us, the default standard analyzer doesn't have
+            # this preprocessing step
+            # https://www.elastic.co/guide/en/elasticsearch/reference/current/analysis.html
+            'mappings': {
+                # this key is the "type", which will be explained in the next code chunk
+                '_doc': {
+                    'properties': {
+                        'title': {
+                            'type': 'text',
+                            'analyzer': 'italian'
+                        },
+                        'document': {
+                            'type': 'text',
+                            'analyzer': 'italian'
+                        },
+                        'url': {
+                            'type': 'text',
+                        },
+                        'id': {
+                            'type': 'number',
+                        }
+                    }
+                }
+            }
+        }
+        self.es.indices.create(index=index_name, body=settings, ignore=[400])
+        
+    def _add_corpus(self, corpus, index_name):
         """
         Index the corpus.
         :param corpus: A mapping from document ID to documents.
         :param index_name: The name of the target ES index.
         """
-        es_index = {
-            "mappings": {
-                "properties": {
-                    "document": {"type": "text"},
-                }
-            }
-        }
-        self.es.indices.create(index=index_name, body=es_index, ignore=[400])
+        import uuid
         ndocuments = len(corpus)
-        dids, documents = list(corpus.keys()), list(corpus.values())
-        chunk_size = 500
+        chunk_size = self.chunk_size
         pbar = tqdm.trange(0, ndocuments, chunk_size)
+
         for begin in pbar:
-            did_chunk = dids[begin : begin + chunk_size]
-            document_chunk = documents[begin : begin + chunk_size]
+            document_chunk = corpus[begin : begin + chunk_size]
             bulk_data = [
                 {
                     "_index": index_name,
-                    "_id": did,
+                    "_id": str(uuid.uuid4()),
                     "_source": {
-                        "document": documnt,
+                        "document": document['text'],
+                        "title": document['title'],
+                        "url": document['url'],
+                        "id": document['id']
                     },
                 }
-                for did, documnt in zip(did_chunk, document_chunk)
+                for document in document_chunk
             ]
             helpers.bulk(self.es, bulk_data)
         self.es.indices.refresh(
@@ -245,6 +296,7 @@ class ElasticSearchBM25(object):
         :param return_scores: Whether to return the scores.
         :return: Ranked documents, a mapping from IDs to the documents (and also the scores, a mapping from IDs to scores).
         """
+        assert topk <= 10000, "`topk` is too large!"
         assert topk <= 10000, "`topk` is too large!"
         result = self.es.search(
             index=self.index_name,
