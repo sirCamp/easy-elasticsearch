@@ -35,19 +35,19 @@ class ElasticSearchBM25(object):
     """
 
     def __init__(
-        self,
-        corpus: Union[List[Dict[str, Any]], None] = None,
-        index_name: str = "one_trial",
-        reindexing: bool = True,
-        port_http: str = "9200",
-        port_tcp: str = "9300",
-        host: str = None,
-        service_type: str = "docker",
-        es_version: str = "7.16.1",
-        timeout: int = 100,
-        max_waiting: int = 100,
-        cache_dir: str = "/tmp",
-        chunk_size = 1000
+            self,
+            corpus: Union[List[Dict[str, Any]], None] = None,
+            index_name: str = "one_trial",
+            reindexing: bool = True,
+            port_http: str = "9200",
+            port_tcp: str = "9300",
+            host: str = None,
+            service_type: str = "docker",
+            es_version: str = "7.16.1",
+            timeout: int = 100,
+            max_waiting: int = 100,
+            cache_dir: str = "/tmp",
+            chunk_size=1000
     ):
         self.container_name = None
         self.pid = None
@@ -121,9 +121,9 @@ class ElasticSearchBM25(object):
                 break
             time.sleep(1)
         assert timeout == False, (
-            "Timeout to start the ES docker container or connect to the ES service, "
-            + "please increase max_waiting or check the idling ES services "
-            + "(starting multiple ES instances from ES executable is not allowed)"
+                "Timeout to start the ES docker container or connect to the ES service, "
+                + "please increase max_waiting or check the idling ES services "
+                + "(starting multiple ES instances from ES executable is not allowed)"
         )
 
     def _start_docker_service(self, port_http, port_tcp, es_version, max_waiting):
@@ -137,12 +137,12 @@ class ElasticSearchBM25(object):
         """
         host = "http://localhost"
         assert (
-            os.system("docker") == 0
+                os.system("docker") == 0
         ), "Cannot run docker! Please make sure docker has been installed correctly."
         container_name = f"easy-elasticsearch-node{int(time.time())}"
         cmd = (
-            f'docker run -p {port_http}:9200 -p {port_tcp}:9300 -e "discovery.type=single-node" --detach '
-            + f"--name {container_name} docker.elastic.co/elasticsearch/elasticsearch:{es_version}"
+                f'docker run -p {port_http}:9200 -p {port_tcp}:9300 -e "discovery.type=single-node" --detach '
+                + f"--name {container_name} docker.elastic.co/elasticsearch/elasticsearch:{es_version}"
         )
         logger.info(f"Running command: `{cmd}`")
         os.system(cmd)
@@ -151,7 +151,7 @@ class ElasticSearchBM25(object):
         return container_name
 
     def _start_executable_service(
-        self, port_http, port_tcp, es_version, max_waiting, cache_dir
+            self, port_http, port_tcp, es_version, max_waiting, cache_dir
     ):
         """
         Start an ES service from an executable program at localhost.
@@ -205,14 +205,14 @@ class ElasticSearchBM25(object):
         return es_pid
 
     def _create_index(self, index_name):
-        
-        #es_index = {
+
+        # es_index = {
         #    "mappings": {
         #        "properties": {
         #            "document": {"type": "text"},
         #        }
         #    }
-        #}
+        # }
         settings = {
             'settings': {
                 'index': {
@@ -255,8 +255,8 @@ class ElasticSearchBM25(object):
             }
         }
         self.es.indices.create(index=index_name, body=settings, ignore=[400])
-        
-    def _add_corpus(self, corpus, index_name):
+
+    def _add_corpus(self, corpus, index_name, progress_disable=False):
         """
         Index the corpus.
         :param corpus: A mapping from document ID to documents.
@@ -265,10 +265,10 @@ class ElasticSearchBM25(object):
         import uuid
         ndocuments = len(corpus)
         chunk_size = self.chunk_size
-        pbar = tqdm.trange(0, ndocuments, chunk_size)
+        pbar = tqdm.trange(0, ndocuments, chunk_size, disable=progress_disable)
 
         for begin in pbar:
-            document_chunk = corpus[begin : begin + chunk_size]
+            document_chunk = corpus[begin: begin + chunk_size]
             bulk_data = [
                 {
                     "_index": index_name,
@@ -286,9 +286,10 @@ class ElasticSearchBM25(object):
         self.es.indices.refresh(
             index=index_name
         )  # important!!! otherwise es might return nothing!!!
-        logger.info(f"Indexing work done: {ndocuments} documents indexed")
+        if not progress_disable:
+            logger.info(f"Indexing work done: {ndocuments} documents indexed")
 
-    def query(self, query: str, topk, return_scores=False) -> Dict[str, str]:
+    def query(self, query: str, topk) -> List[Dict]:
         """
         Search for a given query.
         :param query: The query text.
@@ -304,15 +305,17 @@ class ElasticSearchBM25(object):
             body={"query": {"match": {"document": query}}},
         )
         hits = result["hits"]["hits"]
-        documents_ranked = {hit["_id"]: hit["_source"]["document"] for hit in hits}
-        if return_scores:
-            scores_ranked = {hit["_id"]: hit["_score"] for hit in hits}
-            return documents_ranked, scores_ranked
-        else:
-            return documents_ranked
+        documents_ranked = []
+        for hit in hits:
+            tmp_document = hit["_source"]
+            tmp_document['doc_id'] = hit["_id"]
+            tmp_document['score'] = hit["_score"]
+            documents_ranked.append(tmp_document)
+
+        return documents_ranked
 
     def score(
-        self, query: str, document_ids: List[int], max_ntries=60
+            self, query: str, document_ids: List[int], max_ntries=60
     ) -> Dict[str, str]:
         """
         Scoring a query against the given documents (IDs).
@@ -335,7 +338,7 @@ class ElasticSearchBM25(object):
             except NotFoundError as e:
                 if i == max_ntries:
                     raise e
-                logger.info(f"NotFoundError, now re-trying ({i+1}/{max_ntries}).")
+                logger.info(f"NotFoundError, now re-trying ({i + 1}/{max_ntries}).")
                 time.sleep(1)
 
     def delete_index(self):
