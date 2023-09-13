@@ -32,6 +32,9 @@ class ElasticSearchBM25(object):
     :param timeout: Timeout (in seconds) at the ES-service side.
     :param max_waiting: Maximum time (in seconds) to wait for starting the elasticsearch docker container.
     :param cache_dir: Cache directory for downloading the ES executable if needed.
+    :param k1: K1 param for BM25, tune it for best performance.
+    :param b: B param for BM25, tune it for best performance.
+    :param analyzer: Analyzer for BM25, default set to english. Change it according to your language
     """
 
     def __init__(
@@ -47,11 +50,17 @@ class ElasticSearchBM25(object):
             timeout: int = 100,
             max_waiting: int = 100,
             cache_dir: str = "/tmp",
-            chunk_size=1000
+            chunk_size: int = 1000,
+            k1: float = 0.9,
+            b: float = 0.4,
+            analyzer: str = 'english'
     ):
         self.container_name = None
         self.pid = None
         self.chunk_size = chunk_size
+        self.k1 = k1
+        self.b = b
+        self.analyzer = analyzer
         if host is not None:
             self._wait_and_check(host, port_http, max_waiting)
             logger.info(f"Successfully reached out to ES service at {host}:{port_http}")
@@ -223,7 +232,9 @@ class ElasticSearchBM25(object):
                     # this allows it to use it for all the fields
                     'similarity': {
                         'default': {
-                            'type': 'BM25'
+                            'type': 'BM25',
+                            'b': self.b,
+                            'k1': self.k1
                         }
                     }
                 }
@@ -238,11 +249,11 @@ class ElasticSearchBM25(object):
                     'properties': {
                         'title': {
                             'type': 'text',
-                            'analyzer': 'italian'
+                            'analyzer': self.analyzer
                         },
                         'document': {
                             'type': 'text',
-                            'analyzer': 'italian'
+                            'analyzer': self.analyzer
                         },
                         'url': {
                             'type': 'text',
